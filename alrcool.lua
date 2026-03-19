@@ -7,6 +7,7 @@ local HttpService      = game:GetService("HttpService")
 
 local stopped = false
 local manualStop = false
+local lastKillTime = os.clock()
 
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
@@ -52,41 +53,37 @@ end
 for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
 Players.PlayerAdded:Connect(hookPlayer)
 
-local function getServerList(cursor)
-    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-    if cursor and cursor ~= "" then
-        url = url .. "&cursor=" .. cursor
-    end
-    local ok, result = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(url))
-    end)
-    if ok then return result end
-    return nil
-end
-
 local function hopToPopulatedServer()
     print("test")
-    local cursor = ""
+    local cursor = nil
     local attempts = 0
 
     repeat
         attempts = attempts + 1
-        local data = getServerList(cursor)
-        if not data or not data.data then break end
+        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        if cursor then
+            url = url .. "&cursor=" .. cursor
+        end
+
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end)
+
+        if not ok or not data or not data.data then break end
 
         for _, server in ipairs(data.data) do
             if server.id ~= game.JobId and server.playing and server.playing >= 5 then
-                local ok = pcall(function()
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+                local success = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id)
                 end)
-                if ok then return end
+                if success then return end
             end
         end
 
-        cursor = data.nextPageCursor or ""
-    until cursor == "" or cursor == nil or attempts >= 5
+        cursor = data.nextPageCursor
+    until not cursor or cursor == "" or attempts >= 5
 
-    TeleportService:Teleport(game.PlaceId, player)
+    TeleportService:Teleport(game.PlaceId)
 end
 
 local function startServerHopCheck()
@@ -219,6 +216,42 @@ local function startEquipLoop()
         end
     end)
 end
+
+local function startKillTimeoutCheck()
+    task.spawn(function()
+        while true do
+            if stopped or not isAlive() then return end
+            task.wait(1)
+            if hasItems() and os.clock() - lastKillTime >= 20 then
+                lastKillTime = os.clock()
+                local hum = character:FindFirstChildOfClass("Humanoid")
+                if hum then hum:TakeDamage(math.huge) end
+            end
+        end
+    end)
+end
+
+local function hookKillDetection(p)
+    if p == player then return end
+    p.CharacterAdded:Connect(function(char)
+        local hum = char:WaitForChild("Humanoid", 5)
+        if not hum then return end
+        hum.Died:Connect(function()
+            lastKillTime = os.clock()
+        end)
+    end)
+    if p.Character then
+        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.Died:Connect(function()
+                lastKillTime = os.clock()
+            end)
+        end
+    end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do hookKillDetection(p) end
+Players.PlayerAdded:Connect(hookKillDetection)
 
 local approachingTarget = nil
 local hardLockedTarget  = nil
@@ -356,6 +389,7 @@ local function setupCharacter(newChar)
         startEquipLoop()
         startPositionLock()
         startClickLoop()
+        startKillTimeoutCheck()
     end
 end
 
@@ -369,6 +403,7 @@ player.CharacterAdded:Connect(function(newChar)
         task.wait(0.5)
         if manualStop then return end
         stopped = false
+        lastKillTime = os.clock()
         setupCharacter(newChar)
         startServerHopCheck()
     end)
