@@ -3,6 +3,7 @@ local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
 local TeleportService  = game:GetService("TeleportService")
+local HttpService      = game:GetService("HttpService")
 
 local stopped = false
 local manualStop = false
@@ -51,14 +52,50 @@ end
 for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
 Players.PlayerAdded:Connect(hookPlayer)
 
+local function getServerList(cursor)
+    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+    if cursor and cursor ~= "" then
+        url = url .. "&cursor=" .. cursor
+    end
+    local ok, result = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if ok then return result end
+    return nil
+end
+
+local function hopToPopulatedServer()
+    print("test")
+    local cursor = ""
+    local attempts = 0
+
+    repeat
+        attempts = attempts + 1
+        local data = getServerList(cursor)
+        if not data or not data.data then break end
+
+        for _, server in ipairs(data.data) do
+            if server.id ~= game.JobId and server.playing and server.playing >= 5 then
+                local ok = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+                end)
+                if ok then return end
+            end
+        end
+
+        cursor = data.nextPageCursor or ""
+    until cursor == "" or cursor == nil or attempts >= 5
+
+    TeleportService:Teleport(game.PlaceId, player)
+end
+
 local function startServerHopCheck()
     task.spawn(function()
         while true do
             if manualStop then return end
             task.wait(5)
             if #Players:GetPlayers() < 5 then
-                print("test")
-                TeleportService:Teleport(game.PlaceId, player)
+                hopToPopulatedServer()
                 return
             end
         end
