@@ -97,7 +97,6 @@ local function hopToPopulatedServer()
         nextCursor = data.nextPageCursor
     until not nextCursor or nextCursor == ""
 
-    -- sort largest to smallest
     table.sort(allServers, function(a, b) return a.playing > b.playing end)
 
     if #allServers == 0 then
@@ -122,7 +121,6 @@ local function hopToPopulatedServer()
         warn("No queue_on_teleport found")
     end
 
-    -- try top 3 largest servers in order
     for i = 1, math.min(3, #allServers) do
         local ok = pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, allServers[i].id, player)
@@ -134,13 +132,29 @@ local function hopToPopulatedServer()
     TeleportService:Teleport(game.PlaceId)
 end
 
+local function resetAndHop()
+    -- kill character
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 then
+        hum:TakeDamage(math.huge)
+    end
+
+    -- wait for new character to fully spawn
+    local newChar = player.CharacterAdded:Wait()
+    newChar:WaitForChild("HumanoidRootPart", 10)
+    newChar:WaitForChild("Humanoid", 10)
+    task.wait(0.5)
+
+    hopToPopulatedServer()
+end
+
 local function startServerHopCheck()
     task.spawn(function()
         while true do
             if manualStop then return end
             task.wait(5)
             if #Players:GetPlayers() < 5 then
-                hopToPopulatedServer()
+                resetAndHop()
                 return
             end
         end
