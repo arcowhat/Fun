@@ -53,35 +53,83 @@ end
 for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
 Players.PlayerAdded:Connect(hookPlayer)
 
+local ServersUrl = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+
+local function listServers(cursor)
+    local raw = game:HttpGet(ServersUrl .. ((cursor and "&cursor=" .. cursor) or ""))
+    return HttpService:JSONDecode(raw)
+end
+
+local function get_qot()
+    local env2 = (getgenv and getgenv()) or _G
+    local synApi = type(syn) == "table" and syn or nil
+    local fluxusApi = type(fluxus) == "table" and fluxus or nil
+    local candidates = {
+        queue_on_teleport,
+        queueonteleport,
+        type(env2) == "table" and rawget(env2, "queue_on_teleport") or nil,
+        type(env2) == "table" and rawget(env2, "queueonteleport") or nil,
+        synApi and (synApi.queue_on_teleport or synApi.queueonteleport) or nil,
+        fluxusApi and (fluxusApi.queue_on_teleport or fluxusApi.queueonteleport) or nil,
+    }
+    for _, candidate in ipairs(candidates) do
+        if type(candidate) == "function" then return candidate end
+    end
+    return nil
+end
+
 local function hopToPopulatedServer()
     print("test")
-    local cursor = nil
-    local attempts = 0
+
+    local allServers = {}
+    local nextCursor = nil
 
     repeat
-        attempts = attempts + 1
-        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        if cursor then
-            url = url .. "&cursor=" .. cursor
-        end
+        local ok, data = pcall(listServers, nextCursor)
+        if not ok or not data or not data.data or #data.data == 0 then break end
 
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(game:HttpGet(url))
-        end)
-
-        if not ok or not data or not data.data then break end
-
-        for _, server in ipairs(data.data) do
-            if server.id ~= game.JobId and server.playing and server.playing >= 5 then
-                local success = pcall(function()
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id)
-                end)
-                if success then return end
+        for _, s in ipairs(data.data) do
+            if s.id ~= game.JobId and s.playing and s.playing >= 5 then
+                table.insert(allServers, s)
             end
         end
 
-        cursor = data.nextPageCursor
-    until not cursor or cursor == "" or attempts >= 5
+        nextCursor = data.nextPageCursor
+    until not nextCursor or nextCursor == ""
+
+    -- sort largest to smallest
+    table.sort(allServers, function(a, b) return a.playing > b.playing end)
+
+    if #allServers == 0 then
+        TeleportService:Teleport(game.PlaceId)
+        return
+    end
+
+    local qot = get_qot()
+    if qot then
+        qot([[
+            local Players = game:GetService("Players")
+            local player = Players.LocalPlayer
+            local character = player.Character or player.CharacterAdded:Wait()
+            character:WaitForChild("HumanoidRootPart")
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Server Hop",
+                Text = "Loaded in new server!",
+                Duration = 5,
+            })
+        ]])
+    else
+        warn("No queue_on_teleport found")
+    end
+
+    -- try top 3 largest servers in order
+    for i = 1, math.min(3, #allServers) do
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, allServers[i].id, player)
+        end)
+        if ok then return end
+        task.wait(1)
+    end
 
     TeleportService:Teleport(game.PlaceId)
 end
